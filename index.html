@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>本棚スキャナー</title>
+<style>
+  :root{
+    --bg:#f2f2f7; --card:#ffffff; --fg:#1c1c1e; --muted:#6e6e73; --border:#d1d1d6;
+    --accent:#0071e3; --accent-fg:#ffffff; --ok:#34c759; --warn:#ff9500; --danger:#ff3b30;
+    --input-bg:#ffffff; --shadow:0 1px 3px rgba(0,0,0,0.08);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#000000; --card:#1c1c1e; --fg:#f2f2f7; --muted:#98989d; --border:#3a3a3c;
+      --accent:#0a84ff; --ok:#30d158; --warn:#ff9f0a; --danger:#ff453a;
+      --input-bg:#2c2c2e; --shadow:0 1px 3px rgba(0,0,0,0.4);
+    }
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; padding:0; background:var(--bg); color:var(--fg);
+    font-family:-apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif;
+    -webkit-text-size-adjust:100%; overflow-x:hidden; }
+  body{ padding-top:env(safe-area-inset-top); padding-bottom:calc(24px + env(safe-area-inset-bottom)); }
+  #app{ max-width:560px; margin:0 auto; padding:12px 14px 0; position:relative; }
+  h1{ font-size:19px; margin:10px 0 4px; }
+  h2{ font-size:16px; margin:0 0 10px; }
+  .sub{ font-size:12px; color:var(--muted); margin:0 0 14px; line-height:1.5; }
+  section.card{ background:var(--card); border:1px solid var(--border); border-radius:14px;
+    padding:14px; margin-bottom:14px; box-shadow:var(--shadow); }
+  label.field{ display:block; font-size:12px; color:var(--muted); margin:0 0 10px; }
+  label.field input{ display:block; width:100%; margin-top:4px; padding:10px; font-size:15px;
+    border:1px solid var(--border); border-radius:10px; background:var(--input-bg); color:var(--fg); }
+  button, .btn{ font:inherit; font-size:15px; font-weight:600; border:0; border-radius:10px;
+    padding:12px 14px; background:var(--accent); color:var(--accent-fg); cursor:pointer; }
+  button:disabled{ opacity:.5; }
+  .btn-secondary{ background:transparent; color:var(--accent); border:1px solid var(--border); }
+  .btn-block{ display:block; width:100%; text-align:center; }
+  .btn-small{ font-size:13px; padding:7px 10px; }
+  .row{ display:flex; gap:8px; align-items:center; }
+  .row > *{ flex:1 1 auto; }
+  details summary{ cursor:pointer; font-size:14px; font-weight:600; }
+  #fileInput{ display:none; }
+  .status{ font-size:13px; color:var(--muted); margin-top:10px; line-height:1.6; white-space:pre-wrap; }
+  .status.error{ color:var(--danger); }
+  .stats{ display:flex; gap:12px; font-size:12px; color:var(--muted); margin:0 0 10px; flex-wrap:wrap; }
+  .stats b{ color:var(--fg); }
+  .filter-row{ display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap; }
+  .filter-row button{ font-size:12px; padding:6px 10px; background:transparent; color:var(--fg);
+    border:1px solid var(--border); font-weight:500; }
+  .filter-row button.is-on{ background:var(--accent); color:var(--accent-fg); border-color:var(--accent); }
+
+  .book{ border-top:1px solid var(--border); padding:10px 0; }
+  .book:first-child{ border-top:0; }
+  .book-head{ display:flex; gap:10px; align-items:flex-start; cursor:pointer; }
+  .book-cover{ width:44px; height:62px; flex:0 0 44px; border-radius:4px; object-fit:cover;
+    background:var(--bg); border:1px solid var(--border); }
+  .book-main{ flex:1 1 auto; min-width:0; }
+  .book-title{ font-size:14px; font-weight:600; line-height:1.4; word-break:break-all; }
+  .book-meta{ font-size:12px; color:var(--muted); margin-top:2px; line-height:1.5; word-break:break-all; }
+  .book-raw{ font-size:11px; color:var(--muted); margin-top:2px; }
+  .chev{ flex:0 0 auto; font-size:18px; color:var(--muted); transition:transform .15s; padding-top:4px; }
+  .chev.is-open{ transform:rotate(90deg); }
+  .tag{ display:inline-block; font-size:11px; font-weight:600; border-radius:6px; padding:1px 6px; margin-right:4px; }
+  .tag-ok{ background:color-mix(in srgb, var(--ok) 18%, transparent); color:var(--ok); }
+  .tag-pick{ background:color-mix(in srgb, var(--warn) 18%, transparent); color:var(--warn); }
+  .tag-none{ background:color-mix(in srgb, var(--danger) 15%, transparent); color:var(--danger); }
+  .tag-wait{ background:var(--bg); color:var(--muted); }
+  .tag-seen{ background:var(--bg); color:var(--muted); }
+
+  .cands{ margin-top:8px; display:flex; flex-direction:column; gap:6px; }
+  .cand{ display:flex; gap:8px; align-items:center; padding:6px; border:1px solid var(--border);
+    border-radius:10px; background:var(--bg); cursor:pointer; text-align:left; color:var(--fg);
+    font-weight:400; font-size:13px; width:100%; }
+  .cand img{ width:36px; height:50px; object-fit:cover; border-radius:3px; flex:0 0 36px; background:var(--card); }
+  .cand .c-t{ font-weight:600; line-height:1.4; word-break:break-all; }
+  .cand .c-m{ font-size:11px; color:var(--muted); }
+  .fix-row{ display:flex; gap:6px; margin-top:8px; }
+  .fix-row input{ flex:1 1 auto; min-width:0; padding:8px; font-size:14px; border:1px solid var(--border);
+    border-radius:8px; background:var(--input-bg); color:var(--fg); }
+  .fix-row button{ flex:0 0 auto; }
+
+  .mono-embed{ margin-top:10px; border:1px solid var(--border); border-radius:12px; overflow:hidden; background:var(--bg); }
+  .mono-embed-header{ display:flex; align-items:center; justify-content:space-between; gap:8px;
+    padding:8px 10px; background:var(--card); border-bottom:1px solid var(--border); }
+  .mono-embed-title{ font-size:13px; font-weight:700; }
+  .mono-embed-actions{ display:flex; gap:10px; }
+  .mono-embed-actions a{ font-size:12px; color:var(--accent); text-decoration:none; font-weight:600; }
+  .mono-embed-note{ font-size:11px; color:var(--muted); padding:8px 10px 0; margin:0; line-height:1.5; }
+  .mono-embed iframe{ width:100%; height:65vh; min-height:360px; border:0; display:block; background:var(--card); }
+
+  /* モノトレーサーiframeの固定置き場。パネルはここから動かさず、CSSの位置だけ変える */
+  #monoFramePool{ position:absolute; top:0; left:0; width:0; height:0; overflow:visible; }
+  .mono-panel{ position:absolute; top:-9999px; left:-9999px; width:520px; max-width:92vw; pointer-events:none; }
+  .mono-panel.is-active{ pointer-events:auto; }
+
+  footer{ font-size:11px; color:var(--muted); text-align:center; line-height:1.7; margin:4px 0 20px; }
+  footer a{ color:var(--muted); }
+</style>
+</head>
+<body>
+<div id="app">
+  <h1>本棚スキャナー</h1>
+  <p class="sub">本棚を撮ると、背表紙から本を特定してJANコードを調べます。本をタップするとモノトレーサーが開きます。</p>
+
+  <section class="card">
+    <details id="settingsBox">
+      <summary>設定</summary>
+      <div style="margin-top:12px;">
+        <label class="field">中継サーバーのURL
+          <input id="workerUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://shelf-scan-proxy.xxxx.workers.dev">
+        </label>
+        <label class="field">合言葉（ACCESS_TOKEN）
+          <input id="accessToken" type="password" autocomplete="off" placeholder="Cloudflareに登録したものと同じ">
+        </label>
+        <div class="row">
+          <button id="saveSettingsBtn" type="button">保存</button>
+          <button id="testBtn" type="button" class="btn-secondary">接続テスト</button>
+        </div>
+        <div id="settingsStatus" class="status"></div>
+      </div>
+    </details>
+  </section>
+
+  <section class="card">
+    <h2>撮影</h2>
+    <p class="sub" style="margin-bottom:10px;">1枚に写すのは棚1段（30冊程度）までが目安です。正面から、反射が入らないように撮ってください。複数枚まとめて選べます。</p>
+    <input id="fileInput" type="file" accept="image/*" multiple>
+    <div class="row">
+      <button id="cameraBtn" type="button">写真を撮る／選ぶ</button>
+    </div>
+    <div id="scanStatus" class="status"></div>
+  </section>
+
+  <section class="card" id="resultCard" hidden>
+    <div class="row" style="margin-bottom:8px;">
+      <h2 style="margin:0;">読み取り結果</h2>
+      <button id="clearBtn" type="button" class="btn-secondary btn-small" style="flex:0 0 auto;">クリア</button>
+    </div>
+    <div class="stats" id="stats"></div>
+    <div class="filter-row" id="filterRow">
+      <button type="button" data-filter="all" class="is-on">すべて</button>
+      <button type="button" data-filter="pick">要選択</button>
+      <button type="button" data-filter="none">見つからない</button>
+      <button type="button" data-filter="unseen">未確認</button>
+    </div>
+    <div id="bookList"></div>
+  </section>
+
+  <footer>
+    読み取り結果は端末内(localStorage)にのみ保存されます。<br>
+    <a href="https://developers.rakuten.com/" target="_blank" rel="noopener">Supported by Rakuten Developers</a>
+  </footer>
+
+  <div id="monoFramePool" aria-hidden="true"></div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ===================== 設定 ===================== */
+  var DEFAULT_WORKER_URL = "https://shelf-scan-proxy.matsuitomoharu587.workers.dev";
+  var SETTINGS_KEY = "shelf_scan_settings_v1";
+  var BOOKS_KEY = "shelf_scan_books_v1";
+  var MAX_IMAGE_SIDE = 2560;            // 縮小後の長辺(px)。背表紙の小さい文字を残せる大きさ
+  var MAX_B64_LEN = 5.5 * 1024 * 1024;  // 中継サーバーの上限(6MB)より少し小さく
+  var RAKUTEN_INTERVAL_MS = 1100;       // 楽天APIは1秒に1回程度まで
+  var AUTO_SCORE = 0.72;                // この点数以上で、2位と差があれば自動確定
+  var AUTO_GAP = 0.12;
+  var MAX_MONO_PANELS = 3;              // 同時に保持するモノトレーサーiframeの上限
+
+  function $(id){ return document.getElementById(id); }
+  var appEl = $("app");
+  var monoFramePool = $("monoFramePool");
+
+  function loadSettings(){
+    try{ return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; }catch(e){ return {}; }
+  }
+  function saveSettings(s){
+    try{ localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); }catch(e){}
+  }
+  var settings = loadSettings();
+  if(!settings.workerUrl){ settings.workerUrl = DEFAULT_WORKER_URL; }
+  $("workerUrl").value = settings.workerUrl;
+  $("accessToken").value = settings.token || "";
+  if(!settings.token){ $("settingsBox").open = true; }
+
+  $("saveSettingsBtn").addEventListener("click", function(){
+    settings.workerUrl = $("workerUrl").value.trim().replace(/\/+$/, "");
+    settings.token = $("accessToken").value.trim();
+    saveSettings(settings);
+    setStatus("settingsStatus", "保存しました。");
+  });
+  $("testBtn").addEventListener("click", function(){
+    settings.workerUrl = $("workerUrl").value.trim().replace(/\/+$/, "");
+    settings.token = $("accessToken").value.trim();
+    setStatus("settingsStatus", "確認中…");
+    api("/books?isbn=9784101010014", { method:"GET" }).then(function(){
+      saveSettings(settings);
+      setStatus("settingsStatus", "接続OK（中継サーバー・合言葉・楽天APIとも正常です）。");
+    }).catch(function(e){
+      setStatus("settingsStatus", "接続できませんでした：" + e.message, true);
+    });
+  });
+
+  function setStatus(id, msg, isError){
+    var el = $(id);
+    el.textContent = msg || "";
+    el.classList.toggle("error", !!isError);
+  }
+
+  /* ===================== 通信 ===================== */
+  function api(path, opts){
+    opts = opts || {};
+    if(!settings.workerUrl || !settings.token){
+      return Promise.reject(new Error("設定で中継サーバーのURLと合言葉を入れてください"));
+    }
+    var headers = { "X-Access-Token": settings.token };
+    if(opts.contentType){ headers["Content-Type"] = opts.contentType; }
+    return fetch(settings.workerUrl + path, { method:opts.method || "GET", headers:headers, body:opts.body })
+      .then(function(res){
+        return res.json().catch(function(){ return {}; }).then(function(data){
+          if(!res.ok){ throw new Error(explainError(res.status, data)); }
+          return data;
+        });
+      });
+  }
+  function explainError(status, data){
+    var code = data && data.error;
+    if(code === "unauthorized") return "合言葉が一致しません（設定を確認してください）";
+    if(code === "origin_not_allowed") return "このページのURLが中継サーバーで許可されていません（ALLOWED_ORIGINS）";
+    if(code === "image_too_large") return "画像が大きすぎます";
+    if(code === "gemini_error") return "Geminiのエラー(" + data.status + ")：" + String(data.detail || "").slice(0, 200);
+    if(code === "rakuten_error") return "楽天APIのエラー(" + data.status + ")：" + (data.detail || "");
+    if(code === "parse_error") return "読み取り結果を解析できませんでした";
+    if(code === "missing_secret") return "中継サーバーに " + data.name + " が登録されていません";
+    if(status === 429) return "回数制限にかかりました。少し待ってからやり直してください";
+    return "エラー(" + status + ")" + (code ? "：" + code : "");
+  }
+  function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+
+  /* ===================== 画像の縮小 ===================== */
+  function loadImage(file){
+    if(window.createImageBitmap){
+      return createImageBitmap(file, { imageOrientation:"from-image" }).catch(function(){ return loadViaImg(file); });
+    }
+    return loadViaImg(file);
+  }
+  function loadViaImg(file){
+    return new Promise(function(resolve, reject){
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function(){ URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = function(){ URL.revokeObjectURL(url); reject(new Error("画像を読み込めませんでした")); };
+      img.src = url;
+    });
+  }
+  function toJpegBase64(file){
+    return loadImage(file).then(function(img){
+      var w = img.width, h = img.height;
+      var scale = Math.min(1, MAX_IMAGE_SIDE / Math.max(w, h));
+      var canvas = document.createElement("canvas");
+      canvas.width = Math.round(w * scale);
+      canvas.height = Math.round(h * scale);
+      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+      if(img.close){ img.close(); }
+      var q = 0.88, b64;
+      do{
+        b64 = canvas.toDataURL("image/jpeg", q).split(",")[1];
+        q -= 0.1;
+      }while(b64.length > MAX_B64_LEN && q > 0.4);
+      canvas.width = canvas.height = 0; // メモリ解放
+      if(b64.length > MAX_B64_LEN){ throw new Error("画像が大きすぎます"); }
+      return b64;
+    });
+  }
+
+  /* ===================== 本のデータ ===================== */
+  // status: wait(検索待ち) / ok(確定) / pick(要選択) / none(見つからない)
+  var books = loadBooks();
+  var expandedId = null;
+  var currentFilter = "all";
+
+  function loadBooks(){
+    try{ return JSON.parse(localStorage.getItem(BOOKS_KEY)) || []; }catch(e){ return []; }
+  }
+  function saveBooks(){
+    try{ localStorage.setItem(BOOKS_KEY, JSON.stringify(books)); }catch(e){}
+  }
+  function newId(){ return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+
+  /* ===================== 撮影 → 読み取り ===================== */
+  var busy = false;
+  $("cameraBtn").addEventListener("click", function(){ $("fileInput").click(); });
+  $("fileInput").addEventListener("change", function(e){
+    var files = Array.prototype.slice.call(e.target.files || []);
+    e.target.value = "";
+    if(files.length && !busy){ processPhotos(files); }
+  });
+
+  function processPhotos(files){
+    busy = true;
+    $("cameraBtn").disabled = true;
+    var shotBase = Date.now();
+    var chain = Promise.resolve();
+    var added = [];
+    files.forEach(function(file, idx){
+      chain = chain.then(function(){
+        var label = files.length > 1 ? "（" + (idx + 1) + "/" + files.length + "枚目）" : "";
+        setStatus("scanStatus", "画像を縮小しています" + label);
+        return toJpegBase64(file).then(function(b64){
+          setStatus("scanStatus", "背表紙を読み取っています" + label + "\n（数十秒かかることがあります）");
+          return api("/spines?mime=image/jpeg", { method:"POST", body:b64, contentType:"text/plain" });
+        }).then(function(data){
+          (data.books || []).forEach(function(b){
+            var book = {
+              id:newId(), shot:shotBase + idx, photo:idx + 1, pos:b.position || 0,
+              raw:b.raw_text || "", title:b.title || "", author:b.author || "",
+              publisher:b.publisher || "", label:b.label || "", volume:b.volume || "",
+              conf:b.confidence || "", status:"wait", cands:[], chosen:null, seen:false
+            };
+            books.push(book);
+            added.push(book);
+          });
+          saveBooks();
+          render();
+        }).catch(function(err){
+          setStatus("scanStatus", "読み取りに失敗しました" + label + "：" + err.message, true);
+          throw err;
+        });
+      });
+    });
+    chain.then(function(){
+      if(!added.length){
+        setStatus("scanStatus", "本が見つかりませんでした。もう少し近づいて撮ってみてください。", true);
+        return;
+      }
+      return searchAll(added);
+    }).catch(function(){ /* 状態表示は済み */ }).then(function(){
+      busy = false;
+      $("cameraBtn").disabled = false;
+    });
+  }
+
+  /* ===================== 楽天で検索 ===================== */
+  function searchAll(list){
+    var done = 0;
+    var chain = Promise.resolve();
+    list.forEach(function(book){
+      chain = chain.then(function(){
+        setStatus("scanStatus", "楽天ブックスで検索中… " + (done + 1) + " / " + list.length + " 冊");
+        return lookupBook(book).catch(function(err){
+          book.status = "none";
+          book.err = err.message;
+        }).then(function(){
+          done++;
+          saveBooks();
+          render();
+        });
+      });
+    });
+    return chain.then(function(){
+      var c = countStatus();
+      setStatus("scanStatus", "完了：確定 " + c.ok + " 冊 / 要選択 " + c.pick + " 冊 / 見つからない " + c.none + " 冊");
+    });
+  }
+
+  // タイトル+著者 → だめならタイトルだけ → 生の文字 の順で探す
+  function lookupBook(book){
+    var tries = [];
+    var t = cleanQuery(book.title), a = cleanQuery(book.author), r = cleanQuery(book.raw);
+    if(t && a){ tries.push({ title:t, author:a }); }
+    if(t){ tries.push({ title:t }); }
+    if(r && r !== t){ tries.push({ title:r }); }
+    if(!tries.length && a){ tries.push({ author:a }); }
+
+    var i = 0;
+    function next(){
+      if(i >= tries.length){ book.status = "none"; book.cands = []; return Promise.resolve(); }
+      var q = tries[i++];
+      var qs = Object.keys(q).map(function(k){ return k + "=" + encodeURIComponent(q[k]); }).join("&");
+      return sleep(RAKUTEN_INTERVAL_MS).then(function(){ return api("/books?" + qs); }).then(function(data){
+        var items = (data.items || []).filter(function(it){ return /^97[89]\d{10}$/.test(String(it.isbn || "")); });
+        if(!items.length){ return next(); }
+        applyCandidates(book, items);
+      });
+    }
+    return next();
+  }
+  function cleanQuery(s){
+    return String(s || "").replace(/\?/g, " ").replace(/[\s　]+/g, " ").trim().slice(0, 60);
+  }
+
+  function applyCandidates(book, items){
+    var scored = items.map(function(it){ return { item:pickFields(it), score:scoreCandidate(book, it) }; })
+      .sort(function(x, y){ return y.score - x.score; });
+    book.cands = scored.slice(0, 5).map(function(s){ s.item.score = Math.round(s.score * 100) / 100; return s.item; });
+    var top = scored[0], second = scored[1];
+    if(top.score >= AUTO_SCORE && (!second || top.score - second.score >= AUTO_GAP)){
+      book.status = "ok";
+      book.chosen = book.cands[0];
+    } else {
+      book.status = "pick";
+      book.chosen = null;
+    }
+  }
+  function pickFields(it){
+    return {
+      isbn:String(it.isbn), title:it.title || "", author:it.author || "",
+      publisher:it.publisherName || "", size:it.size || "", date:it.salesDate || "",
+      price:it.itemPrice || "", img:it.largeImageUrl || ""
+    };
+  }
+
+  /* ---- 候補の採点 ---- */
+  function norm(s){
+    return String(s || "").normalize("NFKC").toLowerCase()
+      .replace(/[\s　・･\-‐－ー―~〜「」『』（）()\[\]【】!！?？:：、。,.]/g, "");
+  }
+  function bigrams(s){
+    var out = {};
+    if(s.length < 2){ if(s){ out[s] = 1; } return out; }
+    for(var i = 0; i < s.length - 1; i++){ var g = s.substr(i, 2); out[g] = (out[g] || 0) + 1; }
+    return out;
+  }
+  function dice(a, b){
+    if(!a || !b) return 0;
+    if(a === b) return 1;
+    var A = bigrams(a), B = bigrams(b), inter = 0, na = 0, nb = 0, k;
+    for(k in A){ na += A[k]; if(B[k]){ inter += Math.min(A[k], B[k]); } }
+    for(k in B){ nb += B[k]; }
+    return (2 * inter) / (na + nb);
+  }
+  function volumeOf(s){
+    var t = String(s || "").normalize("NFKC");
+    var m = t.match(/(上|中|下)(?:巻)?$/) || t.match(/(\d+)\s*(?:巻)?\s*$/) || t.match(/[（(]\s*(\d+|上|中|下)\s*[)）]/);
+    return m ? m[1] : "";
+  }
+  function scoreCandidate(book, it){
+    var ocr = norm(book.title || book.raw);
+    var candFull = norm(it.title);
+    var candBase = norm(String(it.title || "").replace(/[（(][^)）]*[)）]/g, "").replace(/\s*\d+$/, ""));
+    var s = Math.max(dice(ocr, candFull), dice(ocr, candBase));
+    if(ocr && candFull.indexOf(ocr) === 0){ s = Math.max(s, 0.85); }
+
+    var a = norm(book.author), ca = norm(it.author);
+    if(a && ca){ s += (ca.indexOf(a) !== -1 || a.indexOf(ca) !== -1 || dice(a, ca) > 0.6) ? 0.12 : -0.08; }
+
+    var label = String(book.label || "").normalize("NFKC");
+    var size = String(it.size || "");
+    if(/文庫/.test(label)){ s += /文庫/.test(size) ? 0.1 : -0.1; }
+    else if(/新書/.test(label)){ s += /新書/.test(size) ? 0.1 : -0.1; }
+
+    var pub = norm(book.publisher), cp = norm(it.publisherName);
+    if(pub && cp && (cp.indexOf(pub) !== -1 || pub.indexOf(cp) !== -1)){ s += 0.05; }
+
+    var v = String(book.volume || "").normalize("NFKC").replace(/巻/g, "").trim();
+    if(v){
+      var cv = volumeOf(it.title);
+      if(cv){ s += (cv === v) ? 0.12 : -0.2; }
+    }
+    return Math.max(0, Math.min(1.2, s));
+  }
+
+  /* ===================== 表示 ===================== */
+  function esc(s){
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
+      return { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c];
+    });
+  }
+  function countStatus(){
+    var c = { ok:0, pick:0, none:0, wait:0, seen:0 };
+    books.forEach(function(b){ c[b.status] = (c[b.status] || 0) + 1; if(b.seen){ c.seen++; } });
+    return c;
+  }
+  function statusTag(b){
+    if(b.status === "ok") return '<span class="tag tag-ok">確定</span>';
+    if(b.status === "pick") return '<span class="tag tag-pick">要選択</span>';
+    if(b.status === "none") return '<span class="tag tag-none">見つからない</span>';
+    return '<span class="tag tag-wait">検索待ち</span>';
+  }
+  function matchesFilter(b){
+    if(currentFilter === "pick") return b.status === "pick";
+    if(currentFilter === "none") return b.status === "none";
+    if(currentFilter === "unseen") return b.status === "ok" && !b.seen;
+    return true;
+  }
+
+  $("filterRow").addEventListener("click", function(e){
+    var btn = e.target.closest("button[data-filter]");
+    if(!btn) return;
+    currentFilter = btn.getAttribute("data-filter");
+    Array.prototype.forEach.call($("filterRow").children, function(x){ x.classList.toggle("is-on", x === btn); });
+    render();
+  });
+  $("clearBtn").addEventListener("click", function(){
+    if(busy) return;
+    if(!confirm("読み取り結果をすべて消しますか？")) return;
+    books = [];
+    expandedId = null;
+    Object.keys(monoPanels).forEach(destroyMonoPanel);
+    saveBooks();
+    setStatus("scanStatus", "");
+    render();
+  });
+
+  var bookList = $("bookList");
+  var activePanel = null, activeSlot = null;
+
+  function render(){
+    $("resultCard").hidden = books.length === 0;
+    var c = countStatus();
+    $("stats").innerHTML = "<span>全 <b>" + books.length + "</b> 冊</span><span>確定 <b>" + c.ok + "</b></span><span>要選択 <b>" + c.pick +
+      "</b></span><span>見つからない <b>" + c.none + "</b></span><span>確認済み <b>" + c.seen + "</b></span>";
+
+    var sorted = books.slice().sort(function(x, y){ return (x.shot - y.shot) || (x.pos - y.pos); });
+    var html = "";
+    var expandTarget = null;
+    sorted.forEach(function(b){
+      if(!matchesFilter(b)) return;
+      var ch = b.chosen;
+      var isOpen = b.id === expandedId;
+      var cover = ch && ch.img ? '<img class="book-cover" src="' + esc(ch.img) + '" alt="" loading="lazy" referrerpolicy="no-referrer">' : '<div class="book-cover"></div>';
+      html += '<div class="book" data-id="' + b.id + '">';
+      html += '<div class="book-head" data-act="toggle">' + cover +
+        '<div class="book-main">' +
+          '<div class="book-title">' + statusTag(b) + (b.seen ? '<span class="tag tag-seen">確認済み</span>' : "") +
+            esc(ch ? ch.title : (b.title || b.raw || "（読み取れず）")) + '</div>' +
+          '<div class="book-meta">' + esc(ch ? [ch.author, ch.publisher, ch.size].filter(Boolean).join(" / ") : [b.author, b.label || b.publisher].filter(Boolean).join(" / ")) + '</div>' +
+          (ch ? '<div class="book-meta">JAN ' + esc(ch.isbn) + '</div>' : "") +
+          '<div class="book-raw">背表紙: ' + esc(b.raw || "-") + '（' + b.photo + '枚目・左から' + b.pos + '冊目）</div>' +
+        '</div>' +
+        '<div class="chev' + (isOpen ? " is-open" : "") + '">›</div>' +
+      '</div>';
+
+      if(isOpen){
+        if(b.status === "pick" || b.status === "none" || (b.status === "ok" && b.reselect)){
+          html += candidatesHtml(b);
+        }
+        if(ch && !b.reselect){
+          html += '<div class="mono-slot"></div>';
+          html += '<div style="margin-top:6px;"><button type="button" class="btn-secondary btn-small" data-act="reselect">別の版を選び直す</button></div>';
+          expandTarget = b;
+        }
+      }
+      html += '</div>';
+    });
+    bookList.innerHTML = html || '<p class="sub">該当する本はありません。</p>';
+
+    // モノトレーサーのパネルは#monoFramePoolから動かさず、スロットの位置に重ねるだけ
+    var newPanel = null, newSlot = null;
+    if(expandTarget){
+      var slot = bookList.querySelector('.book[data-id="' + expandTarget.id + '"] .mono-slot');
+      if(slot){
+        newPanel = getOrCreateMonoPanel(expandTarget.chosen.isbn);
+        positionPanelOverSlot(newPanel, slot);
+        newSlot = slot;
+      }
+    }
+    if(activePanel && activePanel !== newPanel){ parkPanel(activePanel); }
+    activePanel = newPanel;
+    activeSlot = newSlot;
+    evictOldMonoPanels();
+  }
+
+  function candidatesHtml(b){
+    var h = '<div class="cands">';
+    if(b.cands.length){
+      h += '<div class="sub" style="margin:0;">正しい本をタップしてください（背表紙の出版社・レーベルと見比べてください）</div>';
+      b.cands.forEach(function(c, i){
+        h += '<button type="button" class="cand" data-act="choose" data-idx="' + i + '">' +
+          (c.img ? '<img src="' + esc(c.img) + '" alt="" loading="lazy" referrerpolicy="no-referrer">' : '<img alt="">') +
+          '<span><span class="c-t">' + esc(c.title) + '</span><br>' +
+          '<span class="c-m">' + esc([c.author, c.publisher, c.size, c.date].filter(Boolean).join(" / ")) + '</span></span></button>';
+      });
+    } else {
+      h += '<div class="sub" style="margin:0;">楽天ブックスで見つかりませんでした。書名を直して検索するか、裏表紙のJAN（978〜）を入力してください。</div>';
+    }
+    h += '<div class="fix-row"><input type="text" data-role="q" placeholder="書名を直して検索" value="' + esc(b.title || b.raw) + '">' +
+         '<button type="button" class="btn-small" data-act="research">検索</button></div>';
+    h += '<div class="fix-row"><input type="text" data-role="jan" inputmode="numeric" placeholder="JANを直接入力（978〜13桁）">' +
+         '<button type="button" class="btn-small" data-act="jan">決定</button></div>';
+    return h + '</div>';
+  }
+
+  bookList.addEventListener("click", function(e){
+    var el = e.target.closest("[data-act]");
+    if(!el) return;
+    var card = el.closest(".book");
+    var book = card && findBook(card.getAttribute("data-id"));
+    if(!book) return;
+    var act = el.getAttribute("data-act");
+
+    if(act === "toggle"){
+      if(expandedId === book.id){ expandedId = null; }
+      else{
+        expandedId = book.id;
+        if(book.chosen){ book.seen = true; saveBooks(); }
+      }
+      render();
+    } else if(act === "choose"){
+      var c = book.cands[Number(el.getAttribute("data-idx"))];
+      book.chosen = c; book.status = "ok"; book.reselect = false; book.seen = true;
+      saveBooks(); render();
+    } else if(act === "reselect"){
+      book.reselect = true;
+      if(!book.cands.length){ book.status = "none"; }
+      render();
+    } else if(act === "research"){
+      var q = card.querySelector('input[data-role="q"]').value.trim();
+      if(!q || busy) return;
+      el.disabled = true;
+      book.title = q; book.author = ""; book.volume = ""; book.label = "";
+      lookupBook(book).catch(function(err){ book.status = "none"; alert(err.message); }).then(function(){
+        if(book.status === "ok"){ book.seen = true; book.reselect = false; }
+        else if(book.status === "pick"){ book.reselect = true; }
+        saveBooks(); render();
+      });
+    } else if(act === "jan"){
+      var jan = card.querySelector('input[data-role="jan"]').value.replace(/[^0-9]/g, "");
+      if(!/^97[89]\d{10}$/.test(jan)){ alert("978または979から始まる13桁を入力してください"); return; }
+      el.disabled = true;
+      api("/books?isbn=" + jan).then(function(data){
+        var it = (data.items || [])[0];
+        book.chosen = it ? pickFields(it) : { isbn:jan, title:book.title || jan, author:"", publisher:"", size:"", date:"", price:"", img:"" };
+      }).catch(function(){
+        book.chosen = { isbn:jan, title:book.title || jan, author:"", publisher:"", size:"", date:"", price:"", img:"" };
+      }).then(function(){
+        book.status = "ok"; book.reselect = false; book.seen = true;
+        saveBooks(); render();
+      });
+    }
+  });
+  function findBook(id){
+    for(var i = 0; i < books.length; i++){ if(books[i].id === id) return books[i]; }
+    return null;
+  }
+
+  /* ===================== モノトレーサー（せどりJANスキャナーと同じ方式） ===================== */
+  // iframeは開いた本の分だけ作り、最大MAX_MONO_PANELS個まで。古いものから破棄してメモリを空ける。
+  // パネルは#monoFramePoolに一度だけ入れ、以後DOM上では動かさない（動かすとiframeが読み込み直しになるため）。
+  var monoPanels = {};      // isbn -> パネル要素
+  var monoPanelOrder = [];  // 古い順
+
+  function monoUrl(code){ return "https://www.mono-tracer.com/#/list?q=" + encodeURIComponent(code); }
+  function amazonUrl(code){ return "https://www.amazon.co.jp/s?k=" + encodeURIComponent(code); }
+
+  function getOrCreateMonoPanel(code){
+    if(monoPanels[code]){ touchMonoPanel(code); return monoPanels[code]; }
+    var mUrl = monoUrl(code);
+    var tmp = document.createElement("div");
+    tmp.innerHTML = '<div class="mono-panel">' +
+      '<div class="mono-embed">' +
+        '<div class="mono-embed-header">' +
+          '<span class="mono-embed-title">モノトレーサー</span>' +
+          '<div class="mono-embed-actions">' +
+            '<a href="' + amazonUrl(code) + '" target="_blank" rel="noopener">Amazon</a>' +
+            '<a href="' + mUrl + '" target="_blank" rel="noopener">別タブで開く</a>' +
+          '</div>' +
+        '</div>' +
+        '<p class="mono-embed-note">空白のままの場合は「別タブで開く」をご利用ください。</p>' +
+        '<iframe src="' + mUrl + '" referrerpolicy="no-referrer"></iframe>' +
+      '</div>' +
+    '</div>';
+    var panel = tmp.firstElementChild;
+    monoPanels[code] = panel;
+    touchMonoPanel(code);
+    parkPanel(panel);
+    monoFramePool.appendChild(panel);
+    return panel;
+  }
+  function touchMonoPanel(code){
+    var i = monoPanelOrder.indexOf(code);
+    if(i !== -1){ monoPanelOrder.splice(i, 1); }
+    monoPanelOrder.push(code);
+  }
+  function destroyMonoPanel(code){
+    var panel = monoPanels[code];
+    if(panel){
+      var frame = panel.querySelector("iframe");
+      if(frame){ frame.src = "about:blank"; }
+      if(panel.parentNode){ panel.parentNode.removeChild(panel); }
+      if(panel === activePanel){ activePanel = null; activeSlot = null; }
+    }
+    delete monoPanels[code];
+    var i = monoPanelOrder.indexOf(code);
+    if(i !== -1){ monoPanelOrder.splice(i, 1); }
+  }
+  function evictOldMonoPanels(){
+    var idx = 0;
+    while(monoPanelOrder.length > MAX_MONO_PANELS && idx < monoPanelOrder.length){
+      var code = monoPanelOrder[idx];
+      if(monoPanels[code] === activePanel){ idx++; continue; }
+      destroyMonoPanel(code);
+    }
+  }
+  function parkPanel(panel){
+    panel.style.top = "-9999px";
+    panel.style.left = "-9999px";
+    panel.classList.remove("is-active");
+  }
+  function positionPanelOverSlot(panel, slot){
+    panel.style.width = slot.getBoundingClientRect().width + "px";
+    slot.style.height = panel.offsetHeight + "px";
+    var appRect = appEl.getBoundingClientRect();
+    var r = slot.getBoundingClientRect();
+    panel.style.top = (r.top - appRect.top) + "px";
+    panel.style.left = (r.left - appRect.left) + "px";
+    panel.classList.add("is-active");
+  }
+  function repositionActive(){
+    if(activePanel && activeSlot && document.body.contains(activeSlot)){ positionPanelOverSlot(activePanel, activeSlot); }
+  }
+  window.addEventListener("resize", repositionActive);
+  window.addEventListener("orientationchange", repositionActive);
+  // 画像の読み込みなどで上の行の高さが変わったときも位置を合わせ直す
+  bookList.addEventListener("load", repositionActive, true);
+
+  // 前回、検索の途中で閉じた本があれば検索し直す
+  books.forEach(function(b){ if(b.status === "wait"){ b.status = "none"; } });
+  render();
+})();
+</script>
+</body>
+</html>
