@@ -170,7 +170,8 @@
   var RAKUTEN_INTERVAL_MS = 1100;       // 楽天APIは1秒に1回程度まで
   var AUTO_SCORE = 0.72;                // この点数以上で、2位と差があれば自動確定
   var AUTO_GAP = 0.12;
-  var MAX_MONO_PANELS = 3;              // 同時に保持するモノトレーサーiframeの上限
+  var MAX_MONO_PANELS = 4;              // 同時に保持するモノトレーサーiframeの上限（表示中1＋先読み2＋予備1）
+  var PREFETCH_COUNT = 2;               // 本を開いたとき、その下にある未確認の本を何冊先読みするか
 
   function $(id){ return document.getElementById(id); }
   var appEl = $("app");
@@ -563,7 +564,8 @@
     if(activePanel && activePanel !== newPanel){ parkPanel(activePanel); }
     activePanel = newPanel;
     activeSlot = newSlot;
-    evictOldMonoPanels();
+    // 開いた本の下に続く未確認の本を先読みする
+    prefetchAfter(expandTarget, sorted);
   }
 
   function candidatesHtml(b){
@@ -689,13 +691,39 @@
     var i = monoPanelOrder.indexOf(code);
     if(i !== -1){ monoPanelOrder.splice(i, 1); }
   }
+  var protectedCodes = {};  // 表示中・先読み中で、破棄してはいけないJAN
+
+  function isKeptPanel(code){
+    return !!protectedCodes[code] || (!!monoPanels[code] && monoPanels[code] === activePanel);
+  }
+  // 上限を超えたら古いものから破棄する（表示中・先読み中は残す）
   function evictOldMonoPanels(){
     var idx = 0;
     while(monoPanelOrder.length > MAX_MONO_PANELS && idx < monoPanelOrder.length){
       var code = monoPanelOrder[idx];
-      if(monoPanels[code] === activePanel){ idx++; continue; }
+      if(isKeptPanel(code)){ idx++; continue; }
       destroyMonoPanel(code);
     }
+  }
+  // 開いた本より下に並んでいる「確定・未確認」の本をPREFETCH_COUNT冊、裏で読み込んでおく。
+  // 要選択・見つからない本はJANが決まっていないので対象外。
+  function prefetchAfter(item, order){
+    protectedCodes = {};
+    if(item && item.chosen){
+      protectedCodes[item.chosen.isbn] = true;
+      var start = order.indexOf(item);
+      var count = 0;
+      for(var n = start + 1; n < order.length && count < PREFETCH_COUNT; n++){
+        var b = order[n];
+        if(!matchesFilter(b) || b.status !== "ok" || b.seen || !b.chosen){ continue; }
+        var code = b.chosen.isbn;
+        if(protectedCodes[code]){ continue; }
+        protectedCodes[code] = true;
+        getOrCreateMonoPanel(code);
+        count++;
+      }
+    }
+    evictOldMonoPanels();
   }
   function parkPanel(panel){
     panel.style.top = "-9999px";
