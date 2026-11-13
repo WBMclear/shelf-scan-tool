@@ -96,6 +96,35 @@
   .mono-panel{ position:absolute; top:-9999px; left:-9999px; width:520px; max-width:92vw; pointer-events:none; }
   .mono-panel.is-active{ pointer-events:auto; }
 
+  /* 写真と本ごとの枠 */
+  #shotView:empty{ display:none; }
+  #shotView{ margin-bottom:12px; }
+  .shot{ margin-bottom:10px; }
+  .shot-head{ display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px; }
+  .shot-head .shot-title{ font-size:12px; color:var(--muted); }
+  .shot-scroll{ overflow:auto; -webkit-overflow-scrolling:touch; border:1px solid var(--border); border-radius:10px;
+    max-height:70vh; background:#000; }
+  .shot-inner{ position:relative; width:100%; }
+  .shot.is-zoom .shot-inner{ width:260%; }
+  .shot-inner img{ display:block; width:100%; height:auto; }
+  .shot-boxes{ position:absolute; inset:0; }
+  .shot-row{ position:absolute; left:0; right:0; border-top:1px dashed rgba(255,255,255,.55); pointer-events:none; }
+  .bx{ position:absolute; padding:0; margin:0; border:2px solid var(--muted); border-radius:3px; background:transparent;
+    box-shadow:0 0 0 1px rgba(0,0,0,.35); cursor:pointer; min-width:6px; }
+  .bx.st-ok{ border-color:var(--ok); }
+  .bx.st-pick{ border-color:var(--warn); }
+  .bx.st-none{ border-color:var(--danger); background:color-mix(in srgb, var(--danger) 18%, transparent); }
+  .bx.st-wait{ border-color:#c7c7cc; border-style:dashed; }
+  .bx.is-seen{ opacity:.55; }
+  .bx.is-active{ border-width:3px; border-color:#0a84ff; background:color-mix(in srgb, #0a84ff 25%, transparent); opacity:1; z-index:2; }
+  .shot-legend{ display:flex; gap:10px; flex-wrap:wrap; font-size:11px; color:var(--muted); margin-top:6px; }
+  .shot-legend i{ display:inline-block; width:10px; height:10px; border:2px solid; border-radius:2px; margin-right:3px; vertical-align:-1px; }
+
+  .search-log{ margin-top:8px; font-size:11px; color:var(--muted); }
+  .search-log summary{ font-size:12px; font-weight:500; }
+  .search-log ol{ margin:6px 0 0; padding-left:18px; line-height:1.6; word-break:break-all; }
+  .search-log .err{ color:var(--danger); }
+
   footer{ font-size:11px; color:var(--muted); text-align:center; line-height:1.7; margin:4px 0 20px; }
   footer a{ color:var(--muted); }
 </style>
@@ -126,7 +155,7 @@
 
   <section class="card">
     <h2>撮影</h2>
-    <p class="sub" style="margin-bottom:10px;">1枚に写すのは棚1段（30冊程度）までが目安です。正面から、反射が入らないように撮ってください。複数枚まとめて選べます。</p>
+    <p class="sub" style="margin-bottom:10px;">棚を何段写しても大丈夫です。棚板の位置で段ごとに自動で切り分けて読み取ります。正面から、反射が入らないように撮ってください。複数枚まとめて選べます。</p>
     <input id="fileInput" type="file" accept="image/*" multiple>
     <div class="row">
       <button id="cameraBtn" type="button">写真を撮る／選ぶ</button>
@@ -140,6 +169,7 @@
       <button id="clearBtn" type="button" class="btn-secondary btn-small" style="flex:0 0 auto;">クリア</button>
     </div>
     <div class="stats" id="stats"></div>
+    <div id="shotView"></div>
     <div class="filter-row" id="filterRow">
       <button type="button" data-filter="all" class="is-on">すべて</button>
       <button type="button" data-filter="pick">要選択</button>
@@ -150,7 +180,7 @@
   </section>
 
   <footer>
-    読み取り結果は端末内(localStorage)にのみ保存されます。<br>
+    読み取り結果は端末内(localStorage)にのみ保存されます。枠付きの写真は保存されないため、ページを開き直すと消えます。<br>
     <a href="https://developers.rakuten.com/" target="_blank" rel="noopener">Supported by Rakuten Developers</a>
   </footer>
 
@@ -165,9 +195,13 @@
   var DEFAULT_WORKER_URL = "https://shelf-scan-proxy.matsuitomoharu587.workers.dev";
   var SETTINGS_KEY = "shelf_scan_settings_v1";
   var BOOKS_KEY = "shelf_scan_books_v1";
-  var MAX_IMAGE_SIDE = 2560;            // 縮小後の長辺(px)。背表紙の小さい文字を残せる大きさ
+  var TILE_MAX_SIDE = 2048;             // 区画ごとに送る画像の長辺の上限(px)。元の写真から切り出すので細い背表紙も潰れにくい
+  var DISPLAY_MAX_SIDE = 1600;          // 枠表示用に手元に残す写真の長辺(px)
   var MAX_B64_LEN = 5.5 * 1024 * 1024;  // 中継サーバーの上限(6MB)より少し小さく
-  var RAKUTEN_INTERVAL_MS = 1100;       // 楽天APIは1秒に1回程度まで
+  var GEMINI_PARALLEL = 3;              // Geminiに同時に送る区画の数
+  var SEARCH_INTERVAL_MS = { rakuten:1100, ndl:1000, gbooks:600 }; // 検索先ごとの間隔（楽天は1秒に1回程度まで）
+  var WEAK_SCORE = 0.55;                // これ未満の候補しかなければ、著者＋出版社の緩い検索も試す
+  var NEAR_SCORE = 0.65;                // これ以上の候補が見つかったら、それ以上は探さず要選択にする
   var AUTO_SCORE = 0.72;                // この点数以上で、2位と差があれば自動確定
   var AUTO_GAP = 0.12;
   var MAX_MONO_PANELS = 4;              // 同時に保持するモノトレーサーiframeの上限（表示中1＋先読み2＋予備1）
@@ -224,10 +258,25 @@
     return fetch(settings.workerUrl + path, { method:opts.method || "GET", headers:headers, body:opts.body })
       .then(function(res){
         return res.json().catch(function(){ return {}; }).then(function(data){
-          if(!res.ok){ throw new Error(explainError(res.status, data)); }
+          if(!res.ok){
+            var err = new Error(explainError(res.status, data));
+            err.status = res.status;
+            throw err;
+          }
           return data;
         });
       });
+  }
+  // 回数制限(429)や一時的なエラー(5xx・通信エラー)のときは、少し待って再試行する
+  function apiRetry(path, opts, tries, waitMs){
+    tries = tries || 3;
+    waitMs = waitMs || 2000;
+    return api(path, opts).catch(function(err){
+      var retryable = !err.status || err.status === 429 || err.status >= 500;
+      if(err.status === 401 || err.status === 403 || err.status === 413){ retryable = false; }
+      if(!retryable || tries <= 1){ throw err; }
+      return sleep(waitMs).then(function(){ return apiRetry(path, opts, tries - 1, waitMs * 2); });
+    });
   }
   function explainError(status, data){
     var code = data && data.error;
@@ -236,6 +285,9 @@
     if(code === "image_too_large") return "画像が大きすぎます";
     if(code === "gemini_error") return "Geminiのエラー(" + data.status + ")：" + String(data.detail || "").slice(0, 200);
     if(code === "rakuten_error") return "楽天APIのエラー(" + data.status + ")：" + (data.detail || "");
+    if(code === "ndl_error") return "国立国会図書館サーチのエラー(" + data.status + ")";
+    if(code === "gbooks_error") return "Google Booksのエラー(" + data.status + ")";
+    if(code === "not_found" && status === 404) return "中継サーバーが古い版です（worker.jsを更新してください）";
     if(code === "parse_error") return "読み取り結果を解析できませんでした";
     if(code === "missing_secret") return "中継サーバーに " + data.name + " が登録されていません";
     if(status === 429) return "回数制限にかかりました。少し待ってからやり直してください";
@@ -243,7 +295,7 @@
   }
   function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
 
-  /* ===================== 画像の縮小 ===================== */
+  /* ===================== 写真の読み込み ===================== */
   function loadImage(file){
     if(window.createImageBitmap){
       return createImageBitmap(file, { imageOrientation:"from-image" }).catch(function(){ return loadViaImg(file); });
@@ -259,24 +311,178 @@
       img.src = url;
     });
   }
-  function toJpegBase64(file){
-    return loadImage(file).then(function(img){
-      var w = img.width, h = img.height;
-      var scale = Math.min(1, MAX_IMAGE_SIDE / Math.max(w, h));
-      var canvas = document.createElement("canvas");
-      canvas.width = Math.round(w * scale);
-      canvas.height = Math.round(h * scale);
-      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
-      if(img.close){ img.close(); }
-      var q = 0.88, b64;
-      do{
-        b64 = canvas.toDataURL("image/jpeg", q).split(",")[1];
-        q -= 0.1;
-      }while(b64.length > MAX_B64_LEN && q > 0.4);
-      canvas.width = canvas.height = 0; // メモリ解放
-      if(b64.length > MAX_B64_LEN){ throw new Error("画像が大きすぎます"); }
-      return b64;
+  function canvasToB64(canvas){
+    var q = 0.9, b64;
+    do{
+      b64 = canvas.toDataURL("image/jpeg", q).split(",")[1];
+      q -= 0.1;
+    }while(b64.length > MAX_B64_LEN && q > 0.4);
+    if(b64.length > MAX_B64_LEN){ throw new Error("画像が大きすぎます"); }
+    return b64;
+  }
+
+  /* ---- 棚板の検出 ----
+     写真を縮小して横1行ずつ見ていき、「暗くて色の少ない画素」が横一列に並ぶ行を棚板とみなす。
+     棚板と棚板の間が1段。見つからなければ、写真を上下に重ねて等間隔に分ける。 */
+  function detectRows(img, W, H){
+    var aw = 480, ah = Math.max(1, Math.round(H * aw / W));
+    var c = document.createElement("canvas");
+    c.width = aw; c.height = ah;
+    var ctx = c.getContext("2d", { willReadFrequently:true });
+    ctx.drawImage(img, 0, 0, aw, ah);
+    var px = ctx.getImageData(0, 0, aw, ah).data;
+    c.width = c.height = 0;
+
+    var frac = new Float32Array(ah);
+    for(var y = 0; y < ah; y++){
+      var n = 0;
+      for(var x = 0; x < aw; x++){
+        var i = (y * aw + x) * 4, r = px[i], g = px[i + 1], b = px[i + 2];
+        var mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+        if((r + g + b) / 3 < 90 && mx - mn < 40){ n++; }
+      }
+      frac[y] = n / aw;
+    }
+    var k = Math.max(1, Math.round(ah / 300)), sm = new Float32Array(ah);
+    for(y = 0; y < ah; y++){
+      var s = 0, cnt = 0;
+      for(var d = -k; d <= k; d++){ var yy = y + d; if(yy >= 0 && yy < ah){ s += frac[yy]; cnt++; } }
+      sm[y] = s / cnt;
+    }
+    // 棚板（帯）を探す
+    var bands = [], start = -1, minBand = Math.max(2, ah * 0.006);
+    for(y = 0; y <= ah; y++){
+      var on = y < ah && sm[y] > 0.55;
+      if(on && start < 0){ start = y; }
+      if(!on && start >= 0){ if(y - start >= minBand){ bands.push([start, y]); } start = -1; }
+    }
+    // 近すぎる帯は1枚にまとめる
+    var merged = [];
+    bands.forEach(function(b){
+      var last = merged[merged.length - 1];
+      if(last && b[0] - last[1] < ah * 0.015){ last[1] = b[1]; } else { merged.push([b[0], b[1]]); }
     });
+    // 帯と帯の間を段とする
+    var rows = [], prev = 0;
+    merged.forEach(function(b){ rows.push([prev, b[0]]); prev = b[1]; });
+    rows.push([prev, ah]);
+    rows = rows.filter(function(r){ return r[1] - r[0] >= ah * 0.05; });
+
+    var scale = H / ah;
+    var toOrig = function(r){ return { y0:Math.round(r[0] * scale), y1:Math.round(r[1] * scale) }; };
+
+    if(!merged.length || !rows.length){
+      // 棚板が見つからない：横長の写真なら1段とみなし、縦長なら等間隔に分ける
+      if(H / W < 1.1){ return { method:"single", rows:[{ y0:0, y1:H }] }; }
+      return { method:"strips", rows:null };
+    }
+    // 上下の端で見切れている段（他の段より明らかに低い段）は読まない
+    var heights = rows.map(function(r){ return r[1] - r[0]; });
+    var interior = rows.filter(function(r){ return r[0] > 0 && r[1] < ah; }).map(function(r){ return r[1] - r[0]; });
+    var ref = interior.length ? median(interior) : Math.max.apply(null, heights);
+    var kept = rows.filter(function(r){
+      var h = r[1] - r[0];
+      var atEdge = r[0] === 0 || r[1] === ah;
+      return !(atEdge && h < ref * 0.7);
+    });
+    if(!kept.length){ return { method:"strips", rows:null }; }
+    return { method:"shelf", rows:kept.map(toOrig) };
+  }
+  function median(a){
+    var s = a.slice().sort(function(x, y){ return x - y; });
+    return s[Math.floor(s.length / 2)];
+  }
+
+  /* ---- 区画（Geminiに送る単位）を作る ----
+     段が横長なら左右にも分ける。区画は少し重ねて切り出し、本の中心が「担当範囲(core)」に入るものだけ採用する。
+     重なり幅を本の厚みより広くとるので、境目で切れた本は必ずどちらかの区画で丸ごと写る。 */
+  function makeTiles(layout, W, H){
+    var tiles = [];
+    if(layout.method === "strips"){
+      var n = Math.max(2, Math.ceil(H / (W * 0.55)));
+      var sh = H / n, ovy = sh * 0.35;
+      for(var i = 0; i < n; i++){
+        var core = { x0:0, x1:W, y0:i * sh, y1:(i + 1) * sh };
+        splitRow(core, Math.max(0, core.y0 - ovy), Math.min(H, core.y1 + ovy), i);
+      }
+    } else {
+      layout.rows.forEach(function(r, idx){
+        var pad = (r.y1 - r.y0) * 0.02;
+        splitRow({ x0:0, x1:W, y0:r.y0, y1:r.y1 }, Math.max(0, r.y0 - pad), Math.min(H, r.y1 + pad), idx);
+      });
+    }
+    return tiles;
+
+    function splitRow(core, ty0, ty1, rowIdx){
+      var rowH = core.y1 - core.y0;
+      var nSeg = Math.max(1, Math.round(W / (rowH * 1.4)));
+      var segW = W / nSeg;
+      var ov = Math.min(segW * 0.4, Math.max(W * 0.04, rowH * 0.3));
+      for(var j = 0; j < nSeg; j++){
+        var cx0 = j * segW, cx1 = (j + 1) * segW;
+        tiles.push({
+          row:rowIdx,
+          x0:Math.max(0, Math.round(cx0 - ov)), x1:Math.min(W, Math.round(cx1 + ov)),
+          y0:Math.round(ty0), y1:Math.round(ty1),
+          core:{ x0:cx0, x1:cx1, y0:core.y0, y1:core.y1 }
+        });
+      }
+    }
+  }
+  function cropTile(img, t){
+    var w = t.x1 - t.x0, h = t.y1 - t.y0;
+    var scale = Math.min(1, TILE_MAX_SIDE / Math.max(w, h));
+    var c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(w * scale));
+    c.height = Math.max(1, Math.round(h * scale));
+    c.getContext("2d").drawImage(img, t.x0, t.y0, w, h, 0, 0, c.width, c.height);
+    var b64 = canvasToB64(c);
+    c.width = c.height = 0; // メモリ解放
+    return b64;
+  }
+  function makeDisplayImage(img, W, H){
+    var scale = Math.min(1, DISPLAY_MAX_SIDE / Math.max(W, H));
+    var c = document.createElement("canvas");
+    c.width = Math.round(W * scale); c.height = Math.round(H * scale);
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    return new Promise(function(resolve){
+      c.toBlob(function(blob){
+        c.width = c.height = 0;
+        resolve(blob ? URL.createObjectURL(blob) : "");
+      }, "image/jpeg", 0.85);
+    });
+  }
+
+  // Geminiの枠 [ymin,xmin,ymax,xmax]（区画内0〜1000）→ 写真全体での座標(px)
+  function boxesToImage(list, t){
+    var tw = t.x1 - t.x0, th = t.y1 - t.y0;
+    var raw = list.map(function(b){
+      var bb = b.box_2d;
+      if(!Array.isArray(bb) || bb.length !== 4 || bb.some(function(v){ return typeof v !== "number"; })){ return null; }
+      return bb.map(function(v){ return Math.max(0, Math.min(1000, v)); });
+    });
+    // 背表紙は縦長のはず。大半が横長なら、座標の順番が逆とみなして入れ替える
+    var tall = 0, wide = 0;
+    raw.forEach(function(bb){
+      if(!bb) return;
+      var hh = (bb[2] - bb[0]) * th, ww = (bb[3] - bb[1]) * tw;
+      if(hh >= ww){ tall++; } else { wide++; }
+    });
+    var swap = wide > tall * 2 && wide >= 3;
+    return raw.map(function(bb){
+      if(!bb) return null;
+      if(swap){ bb = [bb[1], bb[0], bb[3], bb[2]]; }
+      var y0 = Math.min(bb[0], bb[2]), y1 = Math.max(bb[0], bb[2]);
+      var x0 = Math.min(bb[1], bb[3]), x1 = Math.max(bb[1], bb[3]);
+      return { x0:t.x0 + x0 / 1000 * tw, x1:t.x0 + x1 / 1000 * tw, y0:t.y0 + y0 / 1000 * th, y1:t.y0 + y1 / 1000 * th };
+    });
+  }
+  function iou(a, b){
+    var ix = Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0));
+    var iy = Math.max(0, Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0));
+    var inter = ix * iy;
+    var ua = (a.x1 - a.x0) * (a.y1 - a.y0) + (b.x1 - b.x0) * (b.y1 - b.y0) - inter;
+    return ua > 0 ? inter / ua : 0;
   }
 
   /* ===================== 本のデータ ===================== */
@@ -284,6 +490,7 @@
   var books = loadBooks();
   var expandedId = null;
   var currentFilter = "all";
+  var shots = {};   // 撮影ごとの枠表示用データ（写真は端末のメモリ上だけに置き、保存はしない）
 
   function loadBooks(){
     try{ return JSON.parse(localStorage.getItem(BOOKS_KEY)) || []; }catch(e){ return []; }
@@ -295,6 +502,9 @@
 
   /* ===================== 撮影 → 読み取り ===================== */
   var busy = false;
+  var readMsg = "", searchMsg = "";
+  function showProgress(){ setStatus("scanStatus", [readMsg, searchMsg].filter(Boolean).join("\n")); }
+
   $("cameraBtn").addEventListener("click", function(){ $("fileInput").click(); });
   $("fileInput").addEventListener("change", function(e){
     var files = Array.prototype.slice.call(e.target.files || []);
@@ -306,113 +516,323 @@
     busy = true;
     $("cameraBtn").disabled = true;
     var shotBase = Date.now();
+    var usage = { input:0, output:0 };
+    var stats = { counted:0, read:0, failedTiles:0 };
     var chain = Promise.resolve();
-    var added = [];
     files.forEach(function(file, idx){
       chain = chain.then(function(){
-        var label = files.length > 1 ? "（" + (idx + 1) + "/" + files.length + "枚目）" : "";
-        setStatus("scanStatus", "画像を縮小しています" + label);
-        return toJpegBase64(file).then(function(b64){
-          setStatus("scanStatus", "背表紙を読み取っています" + label + "\n（数十秒かかることがあります）");
-          return api("/spines?mime=image/jpeg", { method:"POST", body:b64, contentType:"text/plain" });
-        }).then(function(data){
-          (data.books || []).forEach(function(b){
-            var book = {
-              id:newId(), shot:shotBase + idx, photo:idx + 1, pos:b.position || 0,
-              raw:b.raw_text || "", title:b.title || "", author:b.author || "",
-              publisher:b.publisher || "", label:b.label || "", volume:b.volume || "",
-              conf:b.confidence || "", status:"wait", cands:[], chosen:null, seen:false
-            };
-            books.push(book);
-            added.push(book);
-          });
-          saveBooks();
-          render();
-        }).catch(function(err){
-          setStatus("scanStatus", "読み取りに失敗しました" + label + "：" + err.message, true);
-          throw err;
-        });
+        return readPhoto(file, shotBase + idx, idx + 1, files.length, usage, stats);
       });
     });
-    chain.then(function(){
-      if(!added.length){
+    chain.catch(function(err){
+      readMsg = "読み取りに失敗しました：" + err.message;
+      showProgress();
+      setStatus("scanStatus", readMsg, true);
+    }).then(function(){
+      return searchIdle();
+    }).then(function(){
+      var c = countStatus();
+      var lines = [];
+      if(stats.read){
+        lines.push("完了：確定 " + c.ok + " 冊 / 要選択 " + c.pick + " 冊 / 見つからない " + c.none + " 冊");
+        lines.push("今回読み取った本：" + stats.read + " 冊（Geminiが数えた冊数 " + stats.counted + " 冊）");
+        if(stats.failedTiles){ lines.push("読み取れなかった区画：" + stats.failedTiles + " か所（枠のない部分）"); }
+        lines.push("Gemini使用量：入力 " + usage.input.toLocaleString() + " / 出力 " + usage.output.toLocaleString() + " トークン");
+        readMsg = ""; searchMsg = "";
+        setStatus("scanStatus", lines.join("\n"));
+      } else if(!stats.failedTiles){
         setStatus("scanStatus", "本が見つかりませんでした。もう少し近づいて撮ってみてください。", true);
-        return;
       }
-      return searchAll(added);
-    }).catch(function(){ /* 状態表示は済み */ }).then(function(){
+    }).then(function(){
       busy = false;
       $("cameraBtn").disabled = false;
     });
   }
 
-  /* ===================== 楽天で検索 ===================== */
-  function searchAll(list){
-    var done = 0;
-    var chain = Promise.resolve();
-    list.forEach(function(book){
-      chain = chain.then(function(){
-        setStatus("scanStatus", "楽天ブックスで検索中… " + (done + 1) + " / " + list.length + " 冊");
-        return lookupBook(book).catch(function(err){
-          book.status = "none";
-          book.err = err.message;
+  function readPhoto(file, shotId, photoNo, photoTotal, usage, stats){
+    var label = photoTotal > 1 ? "（" + photoNo + "/" + photoTotal + "枚目）" : "";
+    readMsg = "写真を段ごとに切り分けています" + label;
+    showProgress();
+    return loadImage(file).then(function(img){
+      var W = img.width, H = img.height;
+      var layout = detectRows(img, W, H);
+      var tiles = makeTiles(layout, W, H);
+      return makeDisplayImage(img, W, H).then(function(url){
+        shots[shotId] = { id:shotId, photo:photoNo, url:url, w:W, h:H, method:layout.method, tiles:tiles, zoom:false };
+        addShotView(shots[shotId]);
+        var done = 0, accepted = [];
+        readMsg = "背表紙を読み取っています" + label + "：0 / " + tiles.length + " 区画";
+        showProgress();
+        return runParallel(tiles, GEMINI_PARALLEL, function(t){
+          var b64;
+          try{ b64 = cropTile(img, t); }catch(e){ return Promise.reject(e); }
+          return apiRetry("/spines?mime=image/jpeg", { method:"POST", body:b64, contentType:"text/plain" }, 3, 5000)
+            .then(function(data){
+              b64 = null;
+              if(data.usage){
+                usage.input += data.usage.promptTokenCount || 0;
+                usage.output += (data.usage.candidatesTokenCount || 0) + (data.usage.thoughtsTokenCount || 0);
+              }
+              if(typeof data.count === "number"){ stats.counted += data.count; }
+              addTileBooks(data.books || [], t, shotId, photoNo, W, H, accepted, stats);
+            }).catch(function(err){
+              stats.failedTiles++;
+              t.failed = err.message;
+            }).then(function(){
+              done++;
+              readMsg = "背表紙を読み取っています" + label + "：" + done + " / " + tiles.length + " 区画";
+              showProgress();
+            });
         }).then(function(){
-          done++;
+          if(img.close){ img.close(); }
+          // 段・左からの順番を振り直す
+          accepted.sort(function(a, b){ return (a.row - b.row) || (a.cx - b.cx); });
+          var perRow = {};
+          accepted.forEach(function(b){ perRow[b.row] = (perRow[b.row] || 0) + 1; b.pos = perRow[b.row]; delete b.cx; });
           saveBooks();
           render();
+          if(stats.failedTiles && !accepted.length){
+            var first = tiles.filter(function(t){ return t.failed; })[0];
+            throw new Error(first ? first.failed : "読み取りに失敗しました");
+          }
         });
       });
     });
-    return chain.then(function(){
-      var c = countStatus();
-      setStatus("scanStatus", "完了：確定 " + c.ok + " 冊 / 要選択 " + c.pick + " 冊 / 見つからない " + c.none + " 冊");
+  }
+
+  function addTileBooks(list, t, shotId, photoNo, W, H, accepted, stats){
+    var boxes = boxesToImage(list, t);
+    list.forEach(function(b, i){
+      var bx = boxes[i];
+      if(bx){
+        var cx = (bx.x0 + bx.x1) / 2, cy = (bx.y0 + bx.y1) / 2;
+        // 担当範囲の外（隣の区画と重なった部分）にある本は、隣の区画に任せる
+        if(cx < t.core.x0 || cx >= t.core.x1 || cy < t.core.y0 || cy >= t.core.y1){ return; }
+        // 念のため、同じ位置の本がすでにあれば重複とみなす
+        for(var k = 0; k < accepted.length; k++){
+          if(accepted[k].bx && iou(accepted[k].bx, bx) > 0.5){ return; }
+        }
+      }
+      var book = {
+        id:newId(), shot:shotId, photo:photoNo, row:t.row + 1, pos:0,
+        cx:bx ? (bx.x0 + bx.x1) / 2 : (t.x0 + t.x1) / 2,
+        box:bx ? { x0:bx.x0 / W, y0:bx.y0 / H, x1:bx.x1 / W, y1:bx.y1 / H } : null,
+        raw:b.raw_text || "", title:b.title || "", author:b.author || "",
+        publisher:b.publisher || "", label:b.label || "", volume:b.volume || "",
+        conf:b.confidence || "", status:"wait", cands:[], chosen:null, seen:false, log:[]
+      };
+      book.bx = bx;
+      books.push(book);
+      accepted.push(book);
+      stats.read++;
+      enqueueSearch(book);
+    });
+    render();
+  }
+
+  // 同時実行数を limit に抑えて順に処理する
+  function runParallel(items, limit, fn){
+    var i = 0;
+    function worker(){
+      if(i >= items.length) return Promise.resolve();
+      var item = items[i++];
+      return Promise.resolve().then(function(){ return fn(item); }).catch(function(){}).then(worker);
+    }
+    var ws = [];
+    for(var n = 0; n < Math.min(limit, items.length); n++){ ws.push(worker()); }
+    return Promise.all(ws);
+  }
+
+  /* ===================== 本の特定（読み取れた本から順に検索） ===================== */
+  // 3冊ずつ並行して検索する。検索先ごとの間隔は throttled() で全体として守る
+  var SEARCH_PARALLEL = 3;
+  var searchQueue = [], searchActive = 0, searchDone = 0, searchTotal = 0, idleWaiters = [];
+  function enqueueSearch(book){
+    searchQueue.push(book);
+    searchTotal++;
+    pumpSearch();
+  }
+  function pumpSearch(){
+    while(searchActive < SEARCH_PARALLEL && searchQueue.length){
+      var book = searchQueue.shift();
+      searchActive++;
+      searchMsg = "本を検索中… " + (searchDone + 1) + " / " + searchTotal + " 冊";
+      showProgress();
+      lookupBook(book).catch(function(err){
+        this.status = "none";
+        this.err = err.message;
+      }.bind(book)).then(function(){
+        searchActive--;
+        searchDone++;
+        delete this.bx;
+        searchMsg = "本を検索中… " + Math.min(searchDone + 1, searchTotal) + " / " + searchTotal + " 冊";
+        saveBooks();
+        render();
+        pumpSearch();
+      }.bind(book));
+    }
+    if(!searchActive && !searchQueue.length){
+      var w = idleWaiters; idleWaiters = [];
+      w.forEach(function(fn){ fn(); });
+    }
+  }
+  function searchIdle(){
+    if(!searchActive && !searchQueue.length){
+      searchDone = 0; searchTotal = 0;
+      return Promise.resolve();
+    }
+    return new Promise(function(r){ idleWaiters.push(r); }).then(searchIdle);
+  }
+
+  var nextSlot = {};
+  function throttled(src, path){
+    var now = Date.now();
+    var slot = Math.max(now, nextSlot[src] || 0);
+    nextSlot[src] = slot + SEARCH_INTERVAL_MS[src];
+    return sleep(slot - now).then(function(){
+      return apiRetry(path, { method:"GET" }, 3, 2000);
     });
   }
 
-  // タイトル+著者 → だめならタイトルだけ → 生の文字 の順で探す
-  function lookupBook(book){
+  var SRC_NAME = { rakuten:"楽天", ndl:"国会図書館", gbooks:"Google" };
+  var SRC_PATH = { rakuten:"/books", ndl:"/ndl", gbooks:"/gbooks" };
+
+  // 検索の順番：楽天（タイトル＋著者 → タイトル → 主題だけ → 読めた文字 → キーワード）
+  //            → 国立国会図書館 → Google Books → 楽天（著者＋出版社。この結果は自動確定しない）
+  function buildTries(book){
+    var t = cleanTitle(book.title), r = cleanTitle(book.raw);
+    var base = mainTitle(book.title) || mainTitle(book.raw);
+    var a = cleanAuthor(book.author), p = cleanPublisher(book.publisher);
+    var name = base || t || r;
     var tries = [];
-    var t = cleanQuery(book.title), a = cleanQuery(book.author), r = cleanQuery(book.raw);
-    if(t && a){ tries.push({ title:t, author:a }); }
-    if(t){ tries.push({ title:t }); }
-    if(r && r !== t){ tries.push({ title:r }); }
-    if(!tries.length && a){ tries.push({ author:a }); }
+    function add(src, q, loose){
+      var keys = Object.keys(q).filter(function(k){ return q[k]; });
+      if(!keys.length) return;
+      var qq = {}; keys.forEach(function(k){ qq[k] = q[k]; });
+      var key = src + JSON.stringify(qq);
+      if(tries.some(function(x){ return x.key === key; })) return;
+      tries.push({ src:src, q:qq, loose:!!loose, key:key });
+    }
+    if(t && a){ add("rakuten", { title:t, author:a }); }
+    if(t){ add("rakuten", { title:t }); }
+    if(base && base !== t){ add("rakuten", { title:base }); }
+    // Geminiが補正した書名が空・誤りのときのため、背表紙から読めた文字のままでも探す
+    if(r && r !== t && r !== base && r.replace(/\s/g, "").length >= 2){ add("rakuten", { title:r }); }
+    if(name){ add("rakuten", { keyword:(name + " " + a).trim() }); }
+    if(name){
+      add("ndl", a ? { title:name, author:a } : { title:name });
+      if(a){ add("ndl", { title:name }); }
+      add("gbooks", { title:name, author:a });
+    }
+    if(a){ add("rakuten", p ? { author:a, publisher:p } : { author:a }, true); }
+    return tries;
+  }
+
+  function lookupBook(book){
+    var tries = buildTries(book);
+    var pool = [], seenIsbn = {}, okCalls = 0, lastErr = "";
+    book.log = [];
+    book.err = "";
 
     var i = 0;
     function next(){
-      if(i >= tries.length){ book.status = "none"; book.cands = []; return Promise.resolve(); }
-      var q = tries[i++];
-      var qs = Object.keys(q).map(function(k){ return k + "=" + encodeURIComponent(q[k]); }).join("&");
-      return sleep(RAKUTEN_INTERVAL_MS).then(function(){ return api("/books?" + qs); }).then(function(data){
+      if(i >= tries.length) return finish();
+      var tr = tries[i++];
+      // 緩い条件（著者＋出版社）は、それまでにそれらしい候補がないときだけ使う
+      if(tr.loose && bestScore() >= WEAK_SCORE) return next();
+      var qs = Object.keys(tr.q).map(function(k){ return k + "=" + encodeURIComponent(tr.q[k]); }).join("&");
+      var entry = { src:tr.src, q:describeQuery(tr.q), n:0 };
+      book.log.push(entry);
+      return throttled(tr.src, SRC_PATH[tr.src] + "?" + qs).then(function(data){
+        okCalls++;
         var items = (data.items || []).filter(function(it){ return /^97[89]\d{10}$/.test(String(it.isbn || "")); });
-        if(!items.length){ return next(); }
-        applyCandidates(book, items);
+        entry.n = items.length;
+        items.forEach(function(it){
+          var isbn = String(it.isbn);
+          if(seenIsbn[isbn]){
+            // 厳しい条件でも見つかった本は「緩い条件だけで見つかった本」ではない
+            if(!tr.loose){ seenIsbn[isbn].loose = false; }
+            return;
+          }
+          var item = pickFields(it, tr.src);
+          item.loose = tr.loose;
+          item.score = scoreCandidate(book, it);
+          seenIsbn[isbn] = item;
+          pool.push(item);
+        });
+        if(canAutoConfirm()) return finish();
+        // それらしい候補（自動確定の一歩手前）が見つかったら、それ以上は探さずに要選択にする
+        if(bestScore() >= NEAR_SCORE) return finish();
+        return next();
+      }, function(err){
+        entry.err = err.message;
+        lastErr = err.message;
+        return next();
       });
+    }
+    function bestScore(){
+      return pool.reduce(function(m, c){ return Math.max(m, c.loose ? 0 : c.score); }, 0);
+    }
+    function sorted(){ return pool.slice().sort(function(x, y){ return y.score - x.score; }); }
+    function canAutoConfirm(){
+      var s = sorted(), top = s[0], second = s[1];
+      return !!top && !top.loose && top.score >= AUTO_SCORE && (!second || top.score - second.score >= AUTO_GAP);
+    }
+    function finish(){
+      var s = sorted();
+      book.cands = s.slice(0, 6).map(function(c){ c.score = Math.round(c.score * 100) / 100; return c; });
+      if(!s.length){
+        book.status = "none";
+        book.chosen = null;
+        if(!okCalls && lastErr){ book.err = lastErr; }
+      } else if(canAutoConfirm()){
+        book.status = "ok";
+        book.chosen = book.cands[0];
+      } else {
+        book.status = "pick";
+        book.chosen = null;
+      }
+      return Promise.resolve();
     }
     return next();
   }
-  function cleanQuery(s){
-    return String(s || "").replace(/\?/g, " ").replace(/[\s　]+/g, " ").trim().slice(0, 60);
+  function describeQuery(q){
+    var names = { title:"書名", author:"著者", publisher:"出版社", keyword:"キーワード" };
+    return Object.keys(q).map(function(k){ return (names[k] || k) + "「" + q[k] + "」"; }).join(" ");
   }
 
-  function applyCandidates(book, items){
-    var scored = items.map(function(it){ return { item:pickFields(it), score:scoreCandidate(book, it) }; })
-      .sort(function(x, y){ return y.score - x.score; });
-    book.cands = scored.slice(0, 5).map(function(s){ s.item.score = Math.round(s.score * 100) / 100; return s.item; });
-    var top = scored[0], second = scored[1];
-    if(top.score >= AUTO_SCORE && (!second || top.score - second.score >= AUTO_GAP)){
-      book.status = "ok";
-      book.chosen = book.cands[0];
-    } else {
-      book.status = "pick";
-      book.chosen = null;
-    }
+  /* ---- 検索語を整える ---- */
+  // 記号・帯の文言などを取り除く（英字のハイフンは「KAT-TUN」などのため残す）
+  function cleanTitle(s){
+    var t = String(s || "").normalize("NFKC");
+    t = t.replace(/[【\[［][^】\]］]*[】\]］]/g, " ");                 // 【新装版】などの注記
+    t = t.replace(/\?+/g, " ");                                         // 読めなかった部分
+    t = t.replace(/[!！?？・･「」『』（）()〈〉《》“”"'’:：;；,，、。.…/／\\|〜~♪★☆※#＃＋+=]/g, " ");
+    t = t.replace(/(^|\s)[-‐－ー―]+|[-‐－―]+(\s|$)/g, " ");          // 単独の長音・ダッシュ
+    return t.replace(/\s+/g, " ").trim().slice(0, 40);
   }
-  function pickFields(it){
+  // サブタイトルを除いた主題（「〜」「：」「―」や空白の前まで）
+  function mainTitle(s){
+    var t = String(s || "").normalize("NFKC").replace(/[【\[［][^】\]］]*[】\]］]/g, " ").replace(/\?+/g, " ").trim();
+    var parts = t.split(/\s*[〜~―:：]\s*|\s{1,}/).filter(function(x){ return x.replace(/[^\p{L}\p{N}]/gu, "").length >= 2; });
+    return parts.length ? cleanTitle(parts[0]) : "";
+  }
+  function cleanAuthor(s){
+    var a = String(s || "").normalize("NFKC");
+    a = a.split(/[、,，/／・&＆]| ほか|他/)[0] || "";
+    a = a.replace(/[\(（][^)）]*[)）]/g, "");
+    a = a.replace(/(原作|原案|監修|監訳|編著|編集|翻訳|著者|作画|作|著|訳|編|文|絵|画|写真|撮影|述|ほか)\s*$/g, "");
+    return a.replace(/[\s?]+/g, "").trim().slice(0, 20);
+  }
+  function cleanPublisher(s){
+    return String(s || "").normalize("NFKC").replace(/[\s?]+/g, "").replace(/(株式会社|\(株\)|㈱)/g, "").slice(0, 20);
+  }
+
+  function pickFields(it, src){
     return {
       isbn:String(it.isbn), title:it.title || "", author:it.author || "",
       publisher:it.publisherName || "", size:it.size || "", date:it.salesDate || "",
-      price:it.itemPrice || "", img:it.largeImageUrl || ""
+      price:it.itemPrice || "", img:it.largeImageUrl || "", src:src || "rakuten"
     };
   }
 
@@ -503,6 +923,9 @@
     books = [];
     expandedId = null;
     Object.keys(monoPanels).forEach(destroyMonoPanel);
+    Object.keys(shots).forEach(function(k){ if(shots[k].url){ URL.revokeObjectURL(shots[k].url); } });
+    shots = {};
+    $("shotView").innerHTML = "";
     saveBooks();
     setStatus("scanStatus", "");
     render();
@@ -517,7 +940,9 @@
     $("stats").innerHTML = "<span>全 <b>" + books.length + "</b> 冊</span><span>確定 <b>" + c.ok + "</b></span><span>要選択 <b>" + c.pick +
       "</b></span><span>見つからない <b>" + c.none + "</b></span><span>確認済み <b>" + c.seen + "</b></span>";
 
-    var sorted = books.slice().sort(function(x, y){ return (x.shot - y.shot) || (x.pos - y.pos); });
+    renderShotBoxes();
+
+    var sorted = books.slice().sort(function(x, y){ return (x.shot - y.shot) || ((x.row || 0) - (y.row || 0)) || (x.pos - y.pos); });
     var html = "";
     var expandTarget = null;
     sorted.forEach(function(b){
@@ -532,7 +957,7 @@
             esc(ch ? ch.title : (b.title || b.raw || "（読み取れず）")) + '</div>' +
           '<div class="book-meta">' + esc(ch ? [ch.author, ch.publisher, ch.size].filter(Boolean).join(" / ") : [b.author, b.label || b.publisher].filter(Boolean).join(" / ")) + '</div>' +
           (ch ? '<div class="book-meta">JAN ' + esc(ch.isbn) + '</div>' : "") +
-          '<div class="book-raw">背表紙: ' + esc(b.raw || "-") + '（' + b.photo + '枚目・左から' + b.pos + '冊目）</div>' +
+          '<div class="book-raw">背表紙: ' + esc(b.raw || "-") + '（' + b.photo + '枚目・' + (b.row ? b.row + '段目・' : '') + '左から' + b.pos + '冊目）</div>' +
         '</div>' +
         '<div class="chev' + (isOpen ? " is-open" : "") + '">›</div>' +
       '</div>';
@@ -576,10 +1001,22 @@
         h += '<button type="button" class="cand" data-act="choose" data-idx="' + i + '">' +
           (c.img ? '<img src="' + esc(c.img) + '" alt="" loading="lazy" referrerpolicy="no-referrer">' : '<img alt="">') +
           '<span><span class="c-t">' + esc(c.title) + '</span><br>' +
-          '<span class="c-m">' + esc([c.author, c.publisher, c.size, c.date].filter(Boolean).join(" / ")) + '</span></span></button>';
+          '<span class="c-m">' + esc([c.author, c.publisher, c.size, c.date].filter(Boolean).join(" / ")) + '</span>' +
+          '<br><span class="c-m">' + esc((SRC_NAME[c.src] || "楽天") + "で検索" + (c.loose ? "（著者名などからの推測）" : "")) + '</span></span></button>';
       });
+    } else if(b.err){
+      h += '<div class="sub" style="margin:0;color:var(--danger);">検索中にエラーが起きました：' + esc(b.err) + '</div>';
+      h += '<div style="margin-top:6px;"><button type="button" class="btn-small" data-act="retry">もう一度検索する</button></div>';
     } else {
-      h += '<div class="sub" style="margin:0;">楽天ブックスで見つかりませんでした。書名を直して検索するか、裏表紙のJAN（978〜）を入力してください。</div>';
+      h += '<div class="sub" style="margin:0;">楽天ブックス・国立国会図書館・Google Booksで見つかりませんでした。書名を直して検索するか、裏表紙のJAN（978〜）を入力してください。</div>';
+    }
+    if(b.log && b.log.length){
+      h += '<details class="search-log"><summary>検索の記録（' + b.log.length + '回）</summary><ol>';
+      b.log.forEach(function(l){
+        h += '<li>' + esc(SRC_NAME[l.src] || l.src) + '：' + esc(l.q) + ' → ' +
+          (l.err ? '<span class="err">エラー（' + esc(l.err) + '）</span>' : l.n + '件') + '</li>';
+      });
+      h += '</ol></details>';
     }
     h += '<div class="fix-row"><input type="text" data-role="q" placeholder="書名を直して検索" value="' + esc(b.title || b.raw) + '">' +
          '<button type="button" class="btn-small" data-act="research">検索</button></div>';
@@ -611,11 +1048,14 @@
       book.reselect = true;
       if(!book.cands.length){ book.status = "none"; }
       render();
-    } else if(act === "research"){
-      var q = card.querySelector('input[data-role="q"]').value.trim();
-      if(!q || busy) return;
+    } else if(act === "research" || act === "retry"){
+      if(busy) return;
+      if(act === "research"){
+        var q = card.querySelector('input[data-role="q"]').value.trim();
+        if(!q) return;
+        book.title = q; book.raw = q; book.author = ""; book.volume = ""; book.label = ""; book.publisher = "";
+      }
       el.disabled = true;
-      book.title = q; book.author = ""; book.volume = ""; book.label = "";
       lookupBook(book).catch(function(err){ book.status = "none"; alert(err.message); }).then(function(){
         if(book.status === "ok"){ book.seen = true; book.reselect = false; }
         else if(book.status === "pick"){ book.reselect = true; }
@@ -747,8 +1187,78 @@
   // 画像の読み込みなどで上の行の高さが変わったときも位置を合わせ直す
   bookList.addEventListener("load", repositionActive, true);
 
+  /* ===================== 写真に本ごとの枠を描く ===================== */
+  // 写真と枠の入れ物は撮影ごとに1回だけ作り、以後は枠だけ描き直す（写真を読み込み直さないため）
+  var shotView = $("shotView");
+  function addShotView(shot){
+    var el = document.createElement("div");
+    el.className = "shot";
+    el.setAttribute("data-shot", shot.id);
+    var methodNote = { shelf:"棚板で段を検出", single:"1段として読み取り", strips:"棚板が見つからないため等間隔に分割" }[shot.method] || "";
+    el.innerHTML =
+      '<div class="shot-head"><span class="shot-title">' + shot.photo + '枚目の写真（' + esc(methodNote) + '・' + shot.tiles.length + '区画）</span>' +
+      '<button type="button" class="btn-secondary btn-small" data-act="zoom">拡大</button></div>' +
+      '<div class="shot-scroll"><div class="shot-inner">' +
+        '<img alt="撮影した本棚" src="' + esc(shot.url) + '">' +
+        '<div class="shot-boxes"></div>' +
+      '</div></div>' +
+      '<div class="shot-legend"><span><i style="border-color:var(--ok)"></i>確定</span><span><i style="border-color:var(--warn)"></i>要選択</span>' +
+      '<span><i style="border-color:var(--danger)"></i>見つからない</span><span><i style="border-color:#c7c7cc;border-style:dashed"></i>検索中</span>' +
+      '<span>枠のない本は読み取れていません</span></div>';
+    el.querySelector("img").addEventListener("load", repositionActive);
+    shotView.appendChild(el);
+  }
+  function renderShotBoxes(){
+    Object.keys(shots).forEach(function(id){
+      var shot = shots[id];
+      var el = shotView.querySelector('.shot[data-shot="' + id + '"]');
+      if(!el) return;
+      var html = "";
+      // 段の境目（読み取りに使った区切り）を点線で示す
+      var ys = {};
+      shot.tiles.forEach(function(t){ ys[Math.round(t.core.y0)] = 1; ys[Math.round(t.core.y1)] = 1; });
+      Object.keys(ys).forEach(function(y){
+        y = Number(y);
+        if(y > 0 && y < shot.h){ html += '<div class="shot-row" style="top:' + (y / shot.h * 100).toFixed(3) + '%"></div>'; }
+      });
+      books.forEach(function(b){
+        if(b.shot !== shot.id || !b.box) return;
+        var cls = "bx st-" + b.status + (b.seen ? " is-seen" : "") + (b.id === expandedId ? " is-active" : "");
+        var label = (b.chosen ? b.chosen.title : (b.title || b.raw || "読み取れず"));
+        html += '<button type="button" class="' + cls + '" data-id="' + b.id + '" title="' + esc(label) + '" aria-label="' + esc(label) + '" style="' +
+          'left:' + (b.box.x0 * 100).toFixed(3) + '%;top:' + (b.box.y0 * 100).toFixed(3) + '%;' +
+          'width:' + ((b.box.x1 - b.box.x0) * 100).toFixed(3) + '%;height:' + ((b.box.y1 - b.box.y0) * 100).toFixed(3) + '%;"></button>';
+      });
+      el.querySelector(".shot-boxes").innerHTML = html;
+    });
+  }
+  shotView.addEventListener("click", function(e){
+    var zoomBtn = e.target.closest('[data-act="zoom"]');
+    if(zoomBtn){
+      var shotEl = zoomBtn.closest(".shot");
+      var on = shotEl.classList.toggle("is-zoom");
+      zoomBtn.textContent = on ? "縮小" : "拡大";
+      repositionActive();
+      return;
+    }
+    var bx = e.target.closest(".bx");
+    if(!bx) return;
+    var book = findBook(bx.getAttribute("data-id"));
+    if(!book) return;
+    // 枠をタップ → 一覧のその本を開く（絞り込みで隠れていれば「すべて」に戻す）
+    if(!matchesFilter(book)){
+      currentFilter = "all";
+      Array.prototype.forEach.call($("filterRow").children, function(x){ x.classList.toggle("is-on", x.getAttribute("data-filter") === "all"); });
+    }
+    expandedId = book.id;
+    if(book.chosen){ book.seen = true; saveBooks(); }
+    render();
+    var card = bookList.querySelector('.book[data-id="' + book.id + '"]');
+    if(card){ card.scrollIntoView({ block:"start", behavior:"smooth" }); }
+  });
+
   // 前回、検索の途中で閉じた本があれば検索し直す
-  books.forEach(function(b){ if(b.status === "wait"){ b.status = "none"; } });
+  books.forEach(function(b){ if(b.status === "wait"){ b.status = "none"; } delete b.bx; });
   render();
 })();
 </script>
